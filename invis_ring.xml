@@ -1,0 +1,599 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<!DOCTYPE muclient>
+
+<muclient>
+<plugin
+   name="Invis_Ring"
+   author="Areia"
+   id="ba2bd6e57193d3fe91d6c2b2"
+   language="Lua"
+   purpose="Automated wearing of Aard Ring of Invisibility"
+   save_state="y"
+   date_written="2020-11-24 05:00:00"
+   requires="5.07"
+   version="1.1"
+   >
+<description trim="y">
+<![CDATA[
+]]>
+</description>
+
+</plugin>
+
+<include name="constants.lua"/>
+
+
+
+<aliases>
+    <alias
+     match="^i(?:n|nv|nvi|nvis)?ring(?:\s+(?<setting>on|off))?$"
+     enabled="y"
+     script="set_auto"
+     regexp="y"
+     ignore_case="y"
+     sequence="100"
+    >
+    </alias>
+    <alias
+     match="^i(?:n|nv|nvi|nvis)?ring\s+id\s+(?<id>.+?)$"
+     enabled="y"
+     script="set_id"
+     regexp="y"
+     ignore_case="y"
+     sequence="100"
+    >
+    </alias>
+    <alias
+     match="^i(?:n|nv|nvi|nvis)?ring\s+help$"
+     enabled="y"
+     script="show_help"
+     regexp="y"
+     ignore_case="y"
+     sequence="100"
+    >
+    </alias>
+</aliases>
+
+
+
+<triggers>
+    <trigger
+     match="^\{invmon\}(?<action>\d+),(?<itemid>\d+),(?<containerid>-?\d+),(?<location>-?\d+)$"
+     enabled="y"
+     script="invmon"
+     regexp="y"
+     omit_from_output="y"
+     sequence="100"
+    >
+    </trigger>
+</triggers>
+
+
+
+<script>
+<![CDATA[
+require "gmcphelper"
+require "wait"
+
+
+
+local auto = GetVariable("auto")
+if (not auto) then
+    -- Set true by default
+    auto = true
+    SetVariable("auto", "1")
+elseif (auto == "1") then
+    auto = true
+elseif (auto == "0") then
+    auto = false
+end
+
+--------------------------------------------------
+-- Ring Class
+--------------------------------------------------
+local Ring = {}
+function Ring:new(name)
+    name = tostring(name)
+    if not (name and name:find("^%a[%a_]*$")) then
+        error("Invalid variable name for new Ring.")
+        return
+    end
+    local new = {}
+    new.name = name:lower()
+    new.id = GetVariable(name .. "_id") or ""
+    new.container = GetVariable(name .. "_container") or ""
+    new.worn = ((GetVariable(name .. "_worn") == "1") and true) or false
+    setmetatable(new, self)
+    self.__index = self
+    return new
+end
+function Ring:save(var, val)
+    local valType = type(val)
+    if (valType == "boolean") then
+        val = (val and "1") or "0"
+    elseif (valType == "number") then
+        val = tostring(val)
+    elseif (valType ~= "string") then
+        error("Invalid value type " .. valType .. " for Ring field.")
+        return
+    end
+    if (type(var) ~= "string") then
+        error("Var names must be strings.")
+        return
+    end
+    local realVar = string.format("%s_%s", self.name, var:lower())
+    SetVariable(realVar, val)
+end
+function Ring:set_id(id)
+    id = tonumber(id)
+    if (not id) then
+        error("Ring ID must be a number.")
+        return
+    end
+    id = tostring(id)
+    self.id = id
+    self:save("id", id)
+end
+function Ring:get_id()
+    return self.id
+end
+function Ring:set_worn(worn)
+    if (worn) then
+        worn = true
+    else
+        worn = false
+    end
+    self.worn = worn
+    self:save("worn", worn)
+end
+function Ring:is_worn()
+    return self.worn
+end
+function Ring:set_container(container)
+    container = tonumber(container)
+    if (not container) then
+        container = ""
+    end
+    container = tostring(container)
+    self.container = container
+    self:save("container", container)
+end
+function Ring:get_container()
+    return self.container
+end
+function Ring:in_container()
+    return tonumber(self.container) ~= nil
+end
+function Ring:is_known()
+    return tonumber(self.id) ~= nil
+end
+function Ring:can_wear()
+    return auto and self:is_known() and not self.worn
+end
+function Ring:wear()
+    local id = self:get_id()
+    if (self:in_container()) then
+        local container = self:get_container()
+        SendNoEcho(string.format("get %s %s", id, container))
+    end
+    SendNoEcho(string.format("wear %s rfinger", id))
+end
+function Ring:wear_if_can()
+    if (self:can_wear()) then
+        self:wear()
+    end
+end
+
+
+
+local invis = Ring:new("invis")
+local stats = Ring:new("stats")
+
+local currState = gmcp("char.status.state") or "0"
+local STATE = {
+    ["ACTIVE"] = "3",
+    ["FIGHTING"] = "8",
+}
+
+function set_auto(name, line, wc)
+    local setting = wc.setting:lower()
+    if (setting == "") then
+        setting = (auto and "off") or "on" -- Set up for toggle
+    end
+    if (setting == "on") then
+        auto = true
+        SetVariable("auto", "1")
+        ColourNote("silver", "black", "Automatic wear/remove of ring of invisibility turned on.")
+        if (currState == STATE.ACTIVE) then
+            invis:wear_if_can()
+        end
+    elseif (setting == "off") then
+        if (currState == STATE.ACTIVE) then
+            stats:wear_if_can()
+        end
+        auto = false
+        SetVariable("auto", "0")
+        ColourNote("silver", "black", "Automatic wear/remove of ring of invisibility turned off.")
+    else
+        ColourNote("silver", "black", "Usage: ", "yellow", "", "iring <on|off>")
+    end
+end -- set_auto
+
+function set_id(name, line, wc)
+    local id = tonumber(wc.id)
+    if (not id) then
+        ColourNote("silver", "black", "Your ring's ID must be a number.")
+        return
+    end
+    invis:set_id(id)
+    ColourNote("silver", "black", "Invis ring ID set: " .. invis:get_id())
+end -- set_id
+
+function show_help(name, line, wc)
+    ColourNote("white", "black", "                         Invis Ring Commands                          ")
+    ColourNote("silver", "black", "======================================================================")
+    ColourNote("yellow", "black", "iring id <ring ID>", "silver", "", ": Set the object ID of your Aardwolf ring of Invis-")
+    ColourNote("silver", "black", "                    ibility. (Note: This must be done before the")
+    ColourNote("silver", "black", "                    plugin can do its thing.)")
+    ColourNote("yellow", "black", "iring [on|off]", "silver", "", ": Set/toggle automated wearing of invis and stat rings.")
+    ColourNote("yellow", "black", "iring help", "silver", "", ": Show this helpfile")
+    ColourNote("silver", "black", "NOTE: This is intended to work with conservative command usage during CPs and")
+    ColourNote("silver", "black", "the likes. It is best to turn it off when you'll be spamming attacks carelessly")
+    ColourNote("silver", "black", "(especially in a group!) to avoid spam and possible malfunction.")
+    ColourNote("silver", "black", "======================================================================")
+end -- show_help
+
+
+
+--------------------------------------------------
+-- Invmon
+--------------------------------------------------
+function invmon(name, line, wc)
+    local action = tonumber(wc.action)
+    local item = wc.itemid
+    local container = wc.containerid
+    local location = tonumber(wc.location)
+    if (action == 1 and location == 20) then
+        ring_removed(item)
+    elseif (action == 2 and location == 20) then
+        ring_worn(item)
+    elseif (action == 5) then
+        item_get(item, container)
+    elseif (action == 6) then
+        item_put(item, container)
+    end
+end -- invmon
+
+function ring_removed(id)
+    if (id == invis:get_id()) then
+        invis:set_worn(false)
+    elseif (id == stats:get_id()) then
+        stats:set_worn(false)
+    else
+        if (invis:is_known() and not stats:is_known()) then
+            stats:set_id(id)
+            stats:set_worn(false)
+            stats:set_container("")
+        end
+    end
+end -- ring_removed
+
+function ring_worn(id)
+    if (id == invis:get_id()) then
+        invis:set_worn(true)
+    elseif (id == stats:get_id()) then
+        stats:set_worn(true)
+    else
+        if (invis:is_known()) then
+            -- We have set invis, and `item` is neither invis nor stats,
+            -- so set it to be new stats
+            stats:set_id(id)
+            stats:set_worn(true)
+            stats:set_container("")
+        end
+    end
+end -- ring_worn
+
+function item_get(item, container)
+    if (item == invis:get_id()) then
+        invis:set_container("")
+    elseif (item == stats:get_id()) then
+        stats:set_container("")
+    end
+end -- item_get
+
+function item_put(item, container)
+    if (item == invis:get_id()) then
+        invis:set_container(container)
+    elseif (item == stats:get_id()) then
+        stats:set_container(container)
+    end
+end -- item_put
+
+
+
+--------------------------------------------------
+-- Plugin Callbacks
+--------------------------------------------------
+local AGGRESSIVE_SKILL_CMDS = {
+    ["abomination"] = true, ["404"] = true,
+    ["acid blast"] = true, ["3"] = true,
+    ["acid stream"] = true, ["320"] = true,
+    ["acid wave"] = true, ["83"] = true,
+    ["acidic touch"] = true, ["200"] = true,
+    ["agitation"] = true, ["98"] = true,
+    ["air dart"] = true, ["465"] = true,
+    ["air skewer"] = true, ["592"] = true,
+    ["amnesia"] = true, ["600"] = true,
+    ["angel breath"] = true, ["190"] = true,
+    ["angelfire"] = true, ["373"] = true,
+    ["apocalypse"] = true, ["406"] = true,
+--    ["assassinate"] = true,
+    ["assault"] = true,
+    ["backstab"] = true, ["bs"] = true,
+    ["balefire"] = true, ["231"] = true,
+    ["ballistic attack"] = true, ["101"] = true,
+    ["balor"] = true,
+--    ["banishment"] = true, ["169"] = true,
+    ["banshee wail"] = true, ["170"] = true,
+    ["bash"] = true,
+    ["black"] = true,
+    ["blades of light"] = true, ["328"] = true,
+    ["blast undead"] = true, ["549"] = true,
+    ["blazing fury"] = true, ["473"] = true,
+    ["blight"] = true, ["368"] = true,
+    ["blindness"] = true, ["6"] = true,
+    ["bodycheck"] = true,
+    ["burning hands"] = true, ["7"] = true,
+    ["burnt"] = true,
+    ["call lightning"] = true, ["8"] = true,
+    ["cause critical"] = true, ["11"] = true,
+    ["cause decay"] = true, ["294"] = true,
+    ["cause light"] = true, ["12"] = true,
+    ["cause serious"] = true, ["13"] = true,
+    ["caustic rain"] = true, ["376"] = true,
+    ["charge"] = true,
+    ["chill touch"] = true, ["16"] = true,
+    ["circle"] = true,
+    ["cleave"] = true,
+    ["colour spray"] = true, ["17"] = true,
+    ["condemn"] = true, ["396"] = true,
+    ["control flames"] = true, ["107"] = true,
+    ["curse of sloth"] = true, ["578"] = true,
+    ["cyclone"] = true, ["386"] = true,
+    ["damnation"] = true, ["402"] = true,
+    ["dampening field"] = true, ["194"] = true,
+    ["death field"] = true, ["109"] = true,
+    ["demonfire"] = true, ["30"] = true,
+    ["demoralize"] = true, ["613"] = true,
+    ["desolation"] = true, ["362"] = true,
+    ["detonate"] = true, ["110"] = true,
+    ["dirt"] = true,
+--    ["disintegrate"] = true, ["111"] = true,
+    ["dispel evil"] = true, ["37"] = true,
+    ["dispel good"] = true, ["184"] = true,
+    ["dispel magic"] = true, ["38"] = true,
+    ["earth maw"] = true, ["380"] = true,
+    ["earth shroud"] = true, ["387"] = true,
+    ["earthen hammer"] = true, ["591"] = true,
+    ["earthquake"] = true, ["39"] = true,
+    ["ego whip"] = true, ["115"] = true,
+    ["engulf"] = true, ["375"] = true,
+    ["eruption"] = true, ["392"] = true,
+    ["exorcise"] = true, ["369"] = true,
+    ["extinguish"] = true, ["374"] = true,
+    ["finger of death"] = true, ["95"] = true,
+    ["fire blast"] = true, ["379"] = true,
+    ["fire breath"] = true, ["84"] = true,
+    ["fire rain"] = true, ["453"] = true,
+    ["fire storm"] = true, ["148"] = true,
+    ["fireball"] = true, ["45"] = true,
+    ["flame arrow"] = true, ["173"] = true,
+    ["flamestrike"] = true, ["47"] = true,
+    ["flaming sphere"] = true, ["346"] = true,
+    ["flay"] = true,
+    ["force bolt"] = true, ["348"] = true,
+    ["forestfire"] = true, ["390"] = true,
+    ["glare"] = true, ["394"] = true,
+    ["green"] = true,
+    ["ground strike"] = true, ["382"] = true,
+    ["gouge"] = true,
+    ["hammer"] = true,
+    ["hammerswing"] = true,
+    ["hand of justice"] = true, ["163"] = true,
+    ["harm"] = true, ["52"] = true,
+    ["headbutt"] = true,
+    ["heavenly balance"] = true, ["161"] = true,
+    ["heavenly smiting"] = true, ["574"] = true,
+    ["hex of entropy"] = true, ["579"] = true,
+    ["hex of misfortune"] = true, ["580"] = true,
+    ["holy arrow"] = true, ["454"] = true,
+    ["holy fury"] = true, ["393"] = true,
+    ["holy rain"] = true, ["364"] = true,
+    ["holy strike"] = true, ["472"] = true,
+    ["holy word"] = true, ["165"] = true,
+    ["hydra"] = true,
+    ["hydroblast"] = true, ["385"] = true,
+    ["ice bolt"] = true, ["389"] = true,
+    ["ice cloud"] = true, ["85"] = true,
+    ["ice daggers"] = true, ["593"] = true,
+    ["ice storm"] = true, ["150"] = true,
+    ["immolate"] = true, ["361"] = true,
+    ["infernal voice"] = true, ["397"] = true,
+    ["inflict pain"] = true, ["122"] = true,
+    ["kick"] = true,
+    ["kill"] = true, ["k"] = true,
+    ["kobold"] = true,
+    ["kspray"] = true, ["ks"] = true,
+    ["lash"] = true,
+    ["light arrow"] = true, ["331"] = true,
+    ["lightning bolt"] = true, ["60"] = true,
+    ["lightning strike"] = true, ["232"] = true,
+    ["magic missile"] = true, ["62"] = true,
+    ["major swarm"] = true, ["192"] = true,
+    ["marbu"] = true,
+    ["megablast"] = true, ["233"] = true,
+    ["miasma"] = true, ["351"] = true,
+    ["mind freeze"] = true, ["353"] = true,
+    ["mind thrust"] = true, ["127"] = true,
+    ["mindflay"] = true,
+    ["minor swarm"] = true, ["191"] = true,
+    ["moonbeam"] = true, ["144"] = true,
+    ["necrocide"] = true, ["539"] = true,
+    ["necrotic"] = true,
+    ["nerve shock"] = true, ["355"] = true,
+    ["neural burn"] = true, ["354"] = true,
+    ["neural overload"] = true, ["360"] = true,
+    ["nightmare touch"] = true, ["359"] = true,
+    ["nova"] = true, ["349"] = true,
+    ["petrify"] = true, ["577"] = true,
+    ["pillar of fire"] = true, ["399"] = true,
+    ["prismatic spray"] = true, ["177"] = true,
+    ["project force"] = true, ["128"] = true,
+    ["psionic blast"] = true, ["129"] = true,
+    ["psychic crush"] = true, ["130"] = true,
+    ["psychic drain"] = true, ["131"] = true,
+    ["psychosis"] = true, ["356"] = true,
+    ["purgatory"] = true, ["405"] = true,
+    ["purge"] = true, ["370"] = true,
+    ["pyromania"] = true, ["234"] = true,
+    ["rainbow"] = true, ["145"] = true,
+    ["raven"] = true,
+    ["raw flesh"] = true, ["137"] = true,
+    ["repentance"] = true, ["400"] = true,
+    ["rune of ix"] = true, ["43"] = true,
+    ["sap"] = true,
+    ["scalp"] = true,
+    ["scorch"] = true, ["350"] = true,
+    ["scourge"] = true, ["398"] = true,
+    ["shard of ice"] = true, ["352"] = true,
+    ["shock aura"] = true, ["87"] = true,
+    ["shocking grasp"] = true, ["73"] = true,
+    ["shoot"] = true,
+--    ["sleep"] = true, ["74"] = true,
+--    ["slit"] = true,
+    ["slow"] = true, ["75"] = true,
+    ["soften"] = true, ["298"] = true,
+    ["solar flare"] = true, ["384"] = true,
+    ["soul rip"] = true, ["395"] = true,
+    ["soulburn"] = true, ["363"] = true,
+    ["spasm"] = true, ["358"] = true,
+    ["spear of odin"] = true, ["541"] = true,
+    ["spiral"] = true,
+    ["spirit bolt"] = true, ["365"] = true,
+    ["spirit strike"] = true, ["401"] = true,
+    ["spiritual disruption"] = true, ["377"] = true,
+    ["spunch"] = true,
+    ["starburst"] = true, ["372"] = true,
+    ["stomp"] = true,
+    ["strike undead"] = true, ["550"] = true,
+    ["stun"] = true,
+    ["suppressed healing"] = true, ["531"] = true,
+    ["sweep"] = true,
+    ["talon"] = true, ["347"] = true,
+    ["telekinesis"] = true, ["196"] = true,
+    ["teleport behind"] = true, ["79"] = true,
+    ["tempest"] = true, ["391"] = true,
+    ["terminate"] = true, ["460"] = true,
+    ["torment"] = true, ["367"] = true,
+    ["tornado"] = true, ["388"] = true,
+    ["tortured vision"] = true, ["588"] = true,
+    ["toxic cloud"] = true, ["86"] = true,
+    ["trauma"] = true, ["357"] = true,
+    ["trip"] = true,
+    ["ultrablast"] = true, ["136"] = true,
+    ["uppercut"] = true,
+    ["vampiric touch"] = true, ["179"] = true,
+    ["vengeance"] = true, ["371"] = true,
+    ["voice of god"] = true, ["378"] = true,
+    ["warcry"] = true,
+    ["web"] = true, ["237"] = true,
+    ["whirlwind"] = true, ["383"] = true,
+    ["white flame"] = true, ["366"] = true,
+    ["wind blast"] = true, ["381"] = true,
+    ["winds of reckoning"] = true, ["403"] = true,
+    ["wither"] = true, ["187"] = true,
+    ["wrath of god"] = true, ["166"] = true,
+    ["zombify"] = true, ["563"] = true,
+} -- aggressive skills
+
+function is_aggressive_skill(skill)
+    return AGGRESSIVE_SKILL_CMDS[skill] == true
+end -- is_aggressive_skill
+
+local RE_CMD_CAST = rex.new(
+    "^\\s*c(?:a|as|ast)?\\s+(?<skill>\\w+|\\d+|'\\w[\\w\\d\\s]*')(?:.+?)?$",
+    rex.flags().CASELESS
+)
+local RE_CMD_SKILL = rex.new(
+    "^\\s*(?<skill>\\w+)(?:.+?)?$",
+    rex.flags().CASELESS
+)
+function OnPluginSend(sText)
+    local src = GetInfo(239)
+    -- Is this direct input from the user?
+    if (src >= 1 and src <= 5) then
+        local skill = ""
+        local first, last, substrings = RE_CMD_CAST:match(sText)
+        if not (first and last and substrings) then
+            -- This isn't a cast, so try to find a skill instead
+            first, last, substrings = RE_CMD_SKILL:match(sText)
+        end
+        if (first and last and substrings) then -- Found a match
+            skill = substrings.skill:lower():gsub("'", "") -- Lower and strip apostrophes
+            if (is_aggressive_skill(skill)) then
+                pre_attack()
+            end
+        end -- if found match
+    end -- if manual user input
+    return true -- Process the command
+end -- OnPluginSend
+
+function pre_attack()
+    if (currState == STATE.ACTIVE) then
+        stats:wear_if_can()
+        wait.make(post_attack)
+    elseif (currState == STATE.FIGHTING) then
+        stats:wear_if_can()
+    end
+end -- pre_attack
+
+function post_attack()
+    wait.time(1)
+    if (currState ~= STATE.FIGHTING) then
+        -- Either we didn't attack anything, or we killed it very quickly
+        if (currState == STATE.ACTIVE) then
+            invis:wear_if_can()
+        end
+    end
+end -- post_attack
+
+
+function OnPluginBroadcast(msg, id, name, text)
+    if (id == "3e7dedbe37e44942dd46d264") then -- GMCP handler
+        if (text == "char.status") then
+            local prevState = currState
+            currState = gmcp("char.status.state")
+            if (prevState ~= currState) then
+                on_state_change(prevState, currState)
+            end
+        end
+    end
+end -- OnPluginBroadcast
+
+function on_state_change(prev, curr)
+    if (curr == STATE.ACTIVE) then
+        invis:wear_if_can()
+    elseif (curr == STATE.FIGHTING) then
+        stats:wear_if_can()
+    end
+end -- on_state_change
+
+function OnPluginInstall()
+    show_help()
+end -- OnPluginInstall
+]]>
+</script>
+
+
+</muclient>
