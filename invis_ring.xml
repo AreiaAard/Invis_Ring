@@ -11,7 +11,7 @@
    save_state="y"
    date_written="2020-11-24 05:00:00"
    requires="5.07"
-   version="1.1"
+   version="1.20"
    >
 <description trim="y">
 <![CDATA[
@@ -47,6 +47,15 @@
      match="^i(?:n|nv|nvi|nvis)?ring\s+help$"
      enabled="y"
      script="show_help"
+     regexp="y"
+     ignore_case="y"
+     sequence="100"
+    >
+    </alias>
+    <alias
+     match="^i(?:n|nv|nvi|nvis)?ring\s+update$"
+     enabled="y"
+     script="update_plugin"
      regexp="y"
      ignore_case="y"
      sequence="100"
@@ -236,6 +245,7 @@ function show_help(name, line, wc)
     ColourNote("silver", "black", "                    ibility. (Note: This must be done before the")
     ColourNote("silver", "black", "                    plugin can do its thing.)")
     ColourNote("yellow", "black", "iring [on|off]", "silver", "", ": Set/toggle automated wearing of invis and stat rings.")
+    ColourNote("yellow", "black", "iring update", "silver", "", ": Check for and, if found, install plugin updates.")
     ColourNote("yellow", "black", "iring help", "silver", "", ": Show this helpfile")
     ColourNote("silver", "black", "NOTE: This is intended to work with conservative command usage during CPs and")
     ColourNote("silver", "black", "the likes. It is best to turn it off when you'll be spamming attacks carelessly")
@@ -592,6 +602,39 @@ end -- on_state_change
 function OnPluginInstall()
     show_help()
 end -- OnPluginInstall
+
+-- Update code courtesy of Crowley
+function update_plugin(alias, line, wc)
+    raw = "https://raw.githubusercontent.com/AreiaAard/Invis_Ring/main/invis_ring.xml"
+    async_ok, async = pcall (require, "async")
+    if async_ok then
+        plugin_page = async.doAsyncRemoteRequest(raw, raw_get, "HTTPS")
+    else
+        ColourNote("white", "blue", "Error on plugin update!")
+    end
+end
+
+function raw_get(retval, page, status, headers, full_status, request_url)
+    local PLUGIN_NAME = GetPluginInfo(GetPluginID(), 1)
+    local PLUGIN_VERSION = GetPluginInfo(GetPluginID(), 19)
+    if status == 200 then
+        raw_version = tonumber(string.match(page, '%s%s+version="([0-9%.]+)"'))
+    end
+    if raw_version == PLUGIN_VERSION then
+        ColourNote("white", "blue", PLUGIN_NAME .. " is up-to-date.")
+    elseif raw_version > PLUGIN_VERSION then
+        ColourNote("white", "blue", "Updating " .. PLUGIN_NAME .. " from version " .. PLUGIN_VERSION .. " to " .. raw_version .. ". Do not touch anything!")
+        local file = io.open(GetPluginInfo(GetPluginID(), 6), "w")
+        file:write(page)
+        file:close()
+    end
+    raw_version = nil
+    if "" == GetAlphaOption("script_prefix") then
+        SetAlphaOption("script_prefix", "\\\\\\")
+    end
+    Execute(GetAlphaOption("script_prefix") .. "DoAfterSpecial(1, \"ReloadPlugin('" .. GetPluginID() .. "')\", sendto.script)")
+    ColourNote("white", "blue", "Update complete!")
+end -- end Update code
 ]]>
 </script>
 
